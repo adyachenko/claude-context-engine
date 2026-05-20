@@ -13,7 +13,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ── Paths ────────────────────────────────────────────────────────────
-_PROJECT_ROOT = Path.cwd()
+# wiki-run cd's into the plugin root before invoking us, so Path.cwd() points
+# at the plugin — not the user's project. Use the env var set by wiki-run.
+_PROJECT_ROOT = Path(
+    os.environ.get("WIKI_PROJECT_ROOT")
+    or os.environ.get("CLAUDE_PROJECT_DIR")
+    or str(Path.cwd())
+)
 
 # Knowledge base (committed)
 KNOWLEDGE_DIR = _PROJECT_ROOT / "wiki"
