@@ -2,6 +2,11 @@
 # wiki-run — wrapper that sets up env vars and runs Python scripts via uv.
 # Used by hooks and skills. Placed in bin/ so the plugin system adds it to PATH.
 
+# Capture the *project* cwd BEFORE we cd into the plugin root, so Python hooks
+# can locate the user's project. CLAUDE_PROJECT_DIR is set by Claude Code for
+# hook invocations; fall back to current PWD for skill/manual invocations.
+export WIKI_PROJECT_ROOT="${WIKI_PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
+
 # Resolve plugin root from this script's location (bin/ is one level deep)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$SCRIPT_DIR")}"

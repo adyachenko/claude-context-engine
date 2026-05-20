@@ -18,7 +18,14 @@ from pathlib import Path
 _PLUGIN_ROOT = Path(
     os.environ.get("CLAUDE_PLUGIN_ROOT", str(Path(__file__).resolve().parent.parent))
 )
-_STATE_DIR = Path.cwd() / ".claude" / "wiki"
+# Resolve user's project dir from env (set by bin/wiki-run before cd into plugin),
+# with Claude Code's CLAUDE_PROJECT_DIR as fallback, then cwd as last resort.
+_PROJECT_ROOT = Path(
+    os.environ.get("WIKI_PROJECT_ROOT")
+    or os.environ.get("CLAUDE_PROJECT_DIR")
+    or str(Path.cwd())
+)
+_STATE_DIR = _PROJECT_ROOT / ".claude" / "wiki"
 # Ensure state dir exists before any importing hook calls logging.basicConfig
 # against _STATE_DIR / "flush.log". Silently no-op on unwritable filesystems —
 # the hook will surface the underlying error when it actually tries to log.
@@ -143,8 +150,9 @@ def find_transcript(session_id: str) -> Path | None:
     if not claude_projects.exists():
         return None
 
-    # Derive project slug from CWD (not plugin root)
-    cwd_slug = str(Path.cwd()).replace("/", "-").replace("\\", "-")
+    # Derive project slug from the user's project root (not plugin root or cwd —
+    # wiki-run cd's into the plugin before invoking Python).
+    cwd_slug = str(_PROJECT_ROOT).replace("/", "-").replace("\\", "-")
     if not cwd_slug.startswith("-"):
         cwd_slug = "-" + cwd_slug
 
