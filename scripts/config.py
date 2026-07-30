@@ -15,6 +15,9 @@ _PLUGIN_ROOT = Path(
 )
 _PROJECT_ROOT = Path(os.environ.get("WIKI_PROJECT_ROOT", str(Path.cwd())))
 
+# ── Agent SDK ────────────────────────────────────────────────────────
+AGENT_MODEL = os.environ.get("WIKI_MODEL", "sonnet")
+
 # ── Knowledge base (committed) ───────────────────────────────────────
 KNOWLEDGE_DIR = _PROJECT_ROOT / "wiki"
 CONCEPTS_DIR = KNOWLEDGE_DIR / "concepts"

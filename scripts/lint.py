@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
 
-from config import KNOWLEDGE_DIR, REPORTS_DIR, now_iso, today_iso
+from config import AGENT_MODEL, KNOWLEDGE_DIR, REPORTS_DIR, now_iso, today_iso
 from utils import (
     count_inbound_links,
     extract_wikilinks,
@@ -42,12 +41,14 @@ def check_broken_links() -> list[dict]:
             if link.startswith("daily/"):
                 continue  # daily log references are valid
             if not wiki_article_exists(link):
-                issues.append({
-                    "severity": "error",
-                    "check": "broken_link",
-                    "file": str(rel),
-                    "detail": f"Broken link: [[{link}]] - target does not exist",
-                })
+                issues.append(
+                    {
+                        "severity": "error",
+                        "check": "broken_link",
+                        "file": str(rel),
+                        "detail": f"Broken link: [[{link}]] - target does not exist",
+                    }
+                )
     return issues
 
 
@@ -59,12 +60,14 @@ def check_orphan_pages() -> list[dict]:
         link_target = str(rel).replace(".md", "").replace("\\", "/")
         inbound = count_inbound_links(link_target)
         if inbound == 0:
-            issues.append({
-                "severity": "warning",
-                "check": "orphan_page",
-                "file": str(rel),
-                "detail": f"Orphan page: no other articles link to [[{link_target}]]",
-            })
+            issues.append(
+                {
+                    "severity": "warning",
+                    "check": "orphan_page",
+                    "file": str(rel),
+                    "detail": f"Orphan page: no other articles link to [[{link_target}]]",
+                }
+            )
     return issues
 
 
@@ -75,12 +78,14 @@ def check_orphan_sources() -> list[dict]:
     issues = []
     for log_path in list_raw_files():
         if log_path.name not in ingested:
-            issues.append({
-                "severity": "warning",
-                "check": "orphan_source",
-                "file": f"daily/{log_path.name}",
-                "detail": f"Uncompiled daily log: {log_path.name} has not been ingested",
-            })
+            issues.append(
+                {
+                    "severity": "warning",
+                    "check": "orphan_source",
+                    "file": f"daily/{log_path.name}",
+                    "detail": f"Uncompiled daily log: {log_path.name} has not been ingested",
+                }
+            )
     return issues
 
 
@@ -95,12 +100,14 @@ def check_stale_articles() -> list[dict]:
             stored_hash = ingested[rel].get("hash", "")
             current_hash = file_hash(log_path)
             if stored_hash != current_hash:
-                issues.append({
-                    "severity": "warning",
-                    "check": "stale_article",
-                    "file": f"daily/{rel}",
-                    "detail": f"Stale: {rel} has changed since last compilation",
-                })
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "check": "stale_article",
+                        "file": f"daily/{rel}",
+                        "detail": f"Stale: {rel} has changed since last compilation",
+                    }
+                )
     return issues
 
 
@@ -119,13 +126,15 @@ def check_missing_backlinks() -> list[dict]:
             if target_path.exists():
                 target_content = target_path.read_text(encoding="utf-8")
                 if f"[[{source_link}]]" not in target_content:
-                    issues.append({
-                        "severity": "suggestion",
-                        "check": "missing_backlink",
-                        "file": str(rel),
-                        "detail": f"[[{source_link}]] links to [[{link}]] but not vice versa",
-                        "auto_fixable": True,
-                    })
+                    issues.append(
+                        {
+                            "severity": "suggestion",
+                            "check": "missing_backlink",
+                            "file": str(rel),
+                            "detail": f"[[{source_link}]] links to [[{link}]] but not vice versa",
+                            "auto_fixable": True,
+                        }
+                    )
     return issues
 
 
@@ -136,12 +145,14 @@ def check_sparse_articles() -> list[dict]:
         word_count = get_article_word_count(article)
         if word_count < 200:
             rel = article.relative_to(KNOWLEDGE_DIR)
-            issues.append({
-                "severity": "suggestion",
-                "check": "sparse_article",
-                "file": str(rel),
-                "detail": f"Sparse article: {word_count} words (minimum recommended: 200)",
-            })
+            issues.append(
+                {
+                    "severity": "suggestion",
+                    "check": "sparse_article",
+                    "file": str(rel),
+                    "detail": f"Sparse article: {word_count} words (minimum recommended: 200)",
+                }
+            )
     return issues
 
 
@@ -153,16 +164,12 @@ def check_low_priority_articles() -> list[dict]:
     accessed, as candidates for consolidation or archiving.
     """
     from compile_truth import (
-        DEFAULT_BUDGET_CHARS,
-        ScoredArticle,
         build_inbound_link_map,
-        extract_fallback_truth,
-        extract_truth_section,
-        parse_frontmatter,
-        score_recency,
-        score_linkedness,
-        score_access,
         compute_score,
+        parse_frontmatter,
+        score_access,
+        score_linkedness,
+        score_recency,
     )
     from datetime import date
 
@@ -199,16 +206,18 @@ def check_low_priority_articles() -> list[dict]:
                 score_linkedness(inbound),
                 score_access(acc_count),
             )
-            issues.append({
-                "severity": "suggestion",
-                "check": "low_priority_article",
-                "file": str(rel),
-                "detail": (
-                    f"Low priority: {days_old} days old, never accessed, "
-                    f"{inbound} inbound links, score={score:.3f} — "
-                    f"candidate for consolidation or archiving"
-                ),
-            })
+            issues.append(
+                {
+                    "severity": "suggestion",
+                    "check": "low_priority_article",
+                    "file": str(rel),
+                    "detail": (
+                        f"Low priority: {days_old} days old, never accessed, "
+                        f"{inbound} inbound links, score={score:.3f} — "
+                        f"candidate for consolidation or archiving"
+                    ),
+                }
+            )
 
     return issues
 
@@ -225,12 +234,14 @@ def check_orphan_source_files() -> list[dict]:
         for fpath in resolve_source_files(group):
             key = f"{group.id}/{fpath.name}"
             if key not in ingested_sources:
-                issues.append({
-                    "severity": "warning",
-                    "check": "orphan_source_file",
-                    "file": f"sources/{key}",
-                    "detail": f"Uningested source: {fpath.name} (group: {group.id})",
-                })
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "check": "orphan_source_file",
+                        "file": f"sources/{key}",
+                        "detail": f"Uningested source: {fpath.name} (group: {group.id})",
+                    }
+                )
 
     return issues
 
@@ -240,7 +251,6 @@ async def check_contradictions() -> list[dict]:
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
-        ResultMessage,
         TextBlock,
         query,
     )
@@ -277,6 +287,7 @@ Do NOT output anything else - no preamble, no explanation, just the formatted li
                 cwd=str(_PROJECT_ROOT),
                 allowed_tools=[],
                 max_turns=2,
+                model=AGENT_MODEL,
             ),
         ):
             if isinstance(message, AssistantMessage):
@@ -284,19 +295,28 @@ Do NOT output anything else - no preamble, no explanation, just the formatted li
                     if isinstance(block, TextBlock):
                         response += block.text
     except Exception as e:
-        return [{"severity": "error", "check": "contradiction", "file": "(system)", "detail": f"LLM check failed: {e}"}]
+        return [
+            {
+                "severity": "error",
+                "check": "contradiction",
+                "file": "(system)",
+                "detail": f"LLM check failed: {e}",
+            }
+        ]
 
     issues = []
     if "NO_ISSUES" not in response:
         for line in response.strip().split("\n"):
             line = line.strip()
             if line.startswith("CONTRADICTION:") or line.startswith("INCONSISTENCY:"):
-                issues.append({
-                    "severity": "warning",
-                    "check": "contradiction",
-                    "file": "(cross-article)",
-                    "detail": line,
-                })
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "check": "contradiction",
+                        "file": "(cross-article)",
+                        "detail": line,
+                    }
+                )
 
     return issues
 

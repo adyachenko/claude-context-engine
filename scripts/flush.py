@@ -13,6 +13,7 @@ from __future__ import annotations
 
 # Recursion prevention: set this BEFORE any imports that might trigger Claude
 import os
+
 os.environ["CLAUDE_INVOKED_BY"] = "memory_flush"
 
 import asyncio
@@ -24,7 +25,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config import DAILY_DIR, SCRIPTS_DIR, KNOWLEDGE_DIR, _STATE_DIR, _PLUGIN_ROOT
+from config import AGENT_MODEL, DAILY_DIR, KNOWLEDGE_DIR, SCRIPTS_DIR, _PLUGIN_ROOT, _STATE_DIR
+from utils import file_hash, migrate_state_schema
 
 STATE_FILE = _STATE_DIR / "last-flush.json"
 LOG_FILE = _STATE_DIR / "flush.log"
@@ -104,8 +106,7 @@ def update_wip_file(wip_content: str) -> None:
     """Rewrite wip.md (not append) with the latest resume-here snapshot."""
     today = datetime.now(timezone.utc).astimezone()
     header = (
-        "# Work In Progress\n\n"
-        f"_Last updated: {today.strftime('%Y-%m-%d %H:%M %Z').strip()}_\n\n"
+        f"# Work In Progress\n\n_Last updated: {today.strftime('%Y-%m-%d %H:%M %Z').strip()}_\n\n"
     )
     WIP_FILE.write_text(header + wip_content + "\n", encoding="utf-8")
 
@@ -172,6 +173,7 @@ respond with exactly: FLUSH_OK
                 cwd=str(KNOWLEDGE_DIR.parent),
                 allowed_tools=[],
                 max_turns=2,
+                model=AGENT_MODEL,
             ),
         ):
             if isinstance(message, AssistantMessage):
@@ -182,6 +184,7 @@ respond with exactly: FLUSH_OK
                 cost = message.total_cost_usd or 0.0
     except Exception as e:
         import traceback
+
         logging.error("Agent SDK error: %s\n%s", e, traceback.format_exc())
         response = f"FLUSH_ERROR: {type(e).__name__}: {e}"
 
@@ -189,6 +192,21 @@ respond with exactly: FLUSH_OK
 
 
 COMPILE_AFTER_HOUR = 18  # 6 PM local time
+
+
+def daily_log_needs_compilation(log_path: Path, state_file: Path) -> bool:
+    """Return whether a daily log is absent from state or has changed."""
+    if not log_path.exists():
+        return False
+    if not state_file.exists():
+        return True
+
+    try:
+        state = migrate_state_schema(json.loads(state_file.read_text(encoding="utf-8")))
+        previous = state.get("ingested_daily", {}).get(log_path.name)
+        return not previous or previous.get("hash") != file_hash(log_path)
+    except (AttributeError, json.JSONDecodeError, OSError, TypeError):
+        return True
 
 
 def maybe_trigger_compilation() -> None:
@@ -199,23 +217,10 @@ def maybe_trigger_compilation() -> None:
     if now.hour < COMPILE_AFTER_HOUR:
         return
 
-    # Check if today's log has already been compiled
-    today_log = f"{now.strftime('%Y-%m-%d')}.md"
+    today_log = DAILY_DIR / f"{now.strftime('%Y-%m-%d')}.md"
     compile_state_file = _STATE_DIR / "state.json"
-    if compile_state_file.exists():
-        try:
-            compile_state = json.loads(compile_state_file.read_text(encoding="utf-8"))
-            ingested = compile_state.get("ingested", {})
-            if today_log in ingested:
-                # Already compiled today - check if the log has changed since
-                from hashlib import sha256
-                log_path = DAILY_DIR / today_log
-                if log_path.exists():
-                    current_hash = sha256(log_path.read_bytes()).hexdigest()[:16]
-                    if ingested[today_log].get("hash") == current_hash:
-                        return  # log unchanged since last compile
-        except (json.JSONDecodeError, OSError):
-            pass
+    if not daily_log_needs_compilation(today_log, compile_state_file):
+        return
 
     compile_script = SCRIPTS_DIR / "compile.py"
     if not compile_script.exists():
@@ -241,9 +246,12 @@ def maybe_trigger_compilation() -> None:
 
 def _today_flush_total(state: dict) -> float:
     """Sum flush costs from today."""
-    today_start = datetime.now(timezone.utc).astimezone().replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ).timestamp()
+    today_start = (
+        datetime.now(timezone.utc)
+        .astimezone()
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .timestamp()
+    )
     return sum(
         entry.get("cost_usd", 0.0)
         for entry in state.get("flush_costs", [])
@@ -267,10 +275,7 @@ def main():
 
     # Deduplication: skip if same session was flushed within 60 seconds
     state = load_flush_state()
-    if (
-        state.get("session_id") == session_id
-        and time.time() - state.get("timestamp", 0) < 60
-    ):
+    if state.get("session_id") == session_id and time.time() - state.get("timestamp", 0) < 60:
         logging.info("Skipping duplicate flush for session %s", session_id)
         context_file.unlink(missing_ok=True)
         return
@@ -290,9 +295,7 @@ def main():
     # Append to daily log
     if "FLUSH_OK" in response:
         logging.info("Result: FLUSH_OK")
-        append_to_daily_log(
-            "FLUSH_OK - Nothing worth saving from this session", "Memory Flush"
-        )
+        append_to_daily_log("FLUSH_OK - Nothing worth saving from this session", "Memory Flush")
     elif "FLUSH_ERROR" in response:
         logging.error("Result: %s", response)
         append_to_daily_log(response, "Memory Flush")
@@ -317,18 +320,23 @@ def main():
     state["session_id"] = session_id
     state["timestamp"] = time.time()
     flush_costs = state.get("flush_costs", [])
-    flush_costs.append({
-        "session_id": session_id,
-        "timestamp": time.time(),
-        "cost_usd": flush_cost,
-        "result": "FLUSH_OK" if "FLUSH_OK" in response else ("error" if "FLUSH_ERROR" in response else "saved"),
-    })
+    flush_costs.append(
+        {
+            "session_id": session_id,
+            "timestamp": time.time(),
+            "cost_usd": flush_cost,
+            "result": "FLUSH_OK"
+            if "FLUSH_OK" in response
+            else ("error" if "FLUSH_ERROR" in response else "saved"),
+        }
+    )
     state["flush_costs"] = flush_costs
     save_flush_state(state)
 
     # Notify
     try:
         from notify import notify
+
         today_total = _today_flush_total(state)
         result_label = "FLUSH_OK" if "FLUSH_OK" in response else "saved"
         notify(
