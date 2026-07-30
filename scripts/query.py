@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
 
-from config import KNOWLEDGE_DIR, QA_DIR, now_iso
+from config import AGENT_MODEL, KNOWLEDGE_DIR, QA_DIR, now_iso
 from utils import load_state, read_all_wiki_content, save_state
 
 from config import _PROJECT_ROOT
@@ -50,8 +49,8 @@ After answering, do the following:
    of the question (e.g., knowledge/qa/how-to-handle-auth-redirects.md)
 2. Use the Q&A article format from the schema (frontmatter with title, question,
    consulted articles, filed date)
-3. Update {KNOWLEDGE_DIR / 'index.md'} with a new row for this Q&A article
-4. Append to {KNOWLEDGE_DIR / 'log.md'}:
+3. Update {KNOWLEDGE_DIR / "index.md"} with a new row for this Q&A article
+4. Append to {KNOWLEDGE_DIR / "log.md"}:
    ## [{timestamp}] query (filed) | question summary
    - Question: {question}
    - Consulted: [[list of articles read]]
@@ -91,6 +90,7 @@ consulting the knowledge base below.
                 allowed_tools=tools,
                 permission_mode="acceptEdits",
                 max_turns=15,
+                model=AGENT_MODEL,
             ),
         ):
             if isinstance(message, AssistantMessage):
@@ -113,6 +113,7 @@ consulting the knowledge base below.
     # that avoids intercepting individual tool calls.
     access_counts = state.setdefault("access_counts", {})
     from utils import extract_wikilinks
+
     cited = set(extract_wikilinks(answer))
     for slug in cited:
         if slug.startswith("daily/"):

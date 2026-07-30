@@ -20,7 +20,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from config import AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, KNOWLEDGE_DIR, now_iso
+from config import AGENT_MODEL, AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, KNOWLEDGE_DIR, now_iso
 from source_handlers import get_handler
 from utils import (
     SourceGroup,
@@ -191,8 +191,8 @@ architectural patterns.
 ### File paths (use these EXACT paths):
 - Write concept articles to: {CONCEPTS_DIR}
 - Write connection articles to: {CONNECTIONS_DIR}
-- Update index at: {KNOWLEDGE_DIR / 'index.md'}
-- Append log at: {KNOWLEDGE_DIR / 'log.md'}
+- Update index at: {KNOWLEDGE_DIR / "index.md"}
+- Append log at: {KNOWLEDGE_DIR / "log.md"}
 """
 
     cost = 0.0
@@ -206,6 +206,7 @@ architectural patterns.
                 allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
                 permission_mode="bypassPermissions",
                 max_turns=30,
+                model=AGENT_MODEL,
             ),
         ):
             if isinstance(message, AssistantMessage):
@@ -258,7 +259,8 @@ def main():
             sys.exit(1)
 
     to_ingest = collect_files_to_ingest(
-        groups, state,
+        groups,
+        state,
         force_all=args.all,
         only_source=args.source,
         verbose=args.verbose,
@@ -284,7 +286,7 @@ def main():
         print(f"\n[{i}/{len(to_ingest)}] Ingesting [{group.id}] {fpath.name}...")
         cost = asyncio.run(ingest_source_file(group, fpath, state))
         total_cost += cost
-        print(f"  Done.")
+        print("  Done.")
 
     articles = list_wiki_articles()
     regenerate_truth()

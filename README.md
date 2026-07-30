@@ -58,6 +58,11 @@ Next session    ──► cycle repeats with fresh knowledge
 
 Source files can also be ingested via `/wiki:ingest` from a project's `sources.yaml`.
 
+Compilation is singleflight per project. If multiple flushes or manual commands request a
+compile at the same time, the first process owns `.claude/wiki/compile.lock`; later processes
+exit successfully without starting duplicate Agent SDK sessions. Locks left by crashed
+processes are recovered automatically.
+
 ## Plugin Skills
 
 | Skill | What it does |
@@ -127,6 +132,8 @@ project/
 │       ├── reports/              # Lint reports
 │       ├── wip.md                # Work-in-progress resume state
 │       ├── state.json            # Compilation tracking
+│       ├── compile.lock/         # Active compilation owner (temporary)
+│       ├── compile.lock.guard    # Lifecycle coordination file
 │       └── last-flush.json       # Flush deduplication
 ```
 
@@ -174,6 +181,16 @@ Then run `/wiki:ingest` from that project.
 | Recency | 40% | Exponential decay from `updated` date |
 | Linkedness | 35% | Log-scaled inbound `[[wikilinks]]` count |
 | Access | 25% | Log-scaled `query.py` citation count |
+
+## Agent Model
+
+All Agent SDK operations (`flush`, `compile`, `ingest`, `query`, and semantic `lint`) use the
+latest Sonnet model through the `sonnet` alias by default. Override it for a process or project
+with `WIKI_MODEL`:
+
+```bash
+WIKI_MODEL=opus claude
+```
 
 ## Cost
 

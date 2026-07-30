@@ -18,7 +18,18 @@ import asyncio
 import sys
 from pathlib import Path
 
-from config import AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, DAILY_DIR, KNOWLEDGE_DIR, now_iso
+from compile_lock import compilation_lock
+from config import (
+    AGENT_MODEL,
+    AGENTS_FILE,
+    CONCEPTS_DIR,
+    CONNECTIONS_DIR,
+    DAILY_DIR,
+    KNOWLEDGE_DIR,
+    _PROJECT_ROOT,
+    _STATE_DIR,
+    now_iso,
+)
 from utils import (
     file_hash,
     list_raw_files,
@@ -28,17 +39,11 @@ from utils import (
     read_wiki_index,
     save_state,
 )
-from compile_truth import compile_truth as regenerate_truth, COMPILED_TRUTH_FILE
+from compile_truth import COMPILED_TRUTH_FILE, compile_truth as regenerate_truth
 
 
-from config import _PROJECT_ROOT
-
-
-async def compile_daily_log(log_path: Path, state: dict) -> float:
-    """Compile a single daily log into knowledge articles.
-
-    Returns the API cost of the compilation.
-    """
+async def compile_daily_log(log_path: Path, state: dict) -> float | None:
+    """Compile one daily log and return its API cost, or ``None`` on failure."""
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
@@ -117,8 +122,8 @@ Read the daily log above and compile it into wiki articles following the schema 
 ### File paths:
 - Write concept articles to: {CONCEPTS_DIR}
 - Write connection articles to: {CONNECTIONS_DIR}
-- Update index at: {KNOWLEDGE_DIR / 'index.md'}
-- Append log at: {KNOWLEDGE_DIR / 'log.md'}
+- Update index at: {KNOWLEDGE_DIR / "index.md"}
+- Append log at: {KNOWLEDGE_DIR / "log.md"}
 
 ### Quality standards:
 - Every article must have complete YAML frontmatter
@@ -130,6 +135,7 @@ Read the daily log above and compile it into wiki articles following the schema 
 """
 
     cost = 0.0
+    completed = False
 
     try:
         async for message in query(
@@ -140,6 +146,7 @@ Read the daily log above and compile it into wiki articles following the schema 
                 allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
                 permission_mode="bypassPermissions",
                 max_turns=30,
+                model=AGENT_MODEL,
             ),
         ):
             if isinstance(message, AssistantMessage):
@@ -147,13 +154,22 @@ Read the daily log above and compile it into wiki articles following the schema 
                     if isinstance(block, TextBlock):
                         pass  # compilation output - LLM writes files directly
             elif isinstance(message, ResultMessage):
+                if message.is_error:
+                    detail = message.result or "; ".join(message.errors or []) or message.subtype
+                    print(f"  Error: {detail}")
+                    return None
                 cost = message.total_cost_usd or 0.0
+                completed = True
                 print(f"  Cost: ${cost:.4f}")
     except Exception as e:
         print(f"  Error: {e}")
-        return 0.0
+        return None
 
-    # Update state
+    if not completed:
+        print("  Error: Agent SDK returned no successful result")
+        return None
+
+    # Update state only after a successful ResultMessage.
     rel_path = log_path.name
     state.setdefault("ingested_daily", {})[rel_path] = {
         "hash": file_hash(log_path),
@@ -166,13 +182,8 @@ Read the daily log above and compile it into wiki articles following the schema 
     return cost
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Compile daily logs into knowledge articles")
-    parser.add_argument("--all", action="store_true", help="Force recompile all logs")
-    parser.add_argument("--file", type=str, help="Compile a specific daily log file")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be compiled")
-    args = parser.parse_args()
-
+def _run(args: argparse.Namespace) -> None:
+    """Compile the logs selected by parsed command-line arguments."""
     state = load_state()
     state = migrate_state_schema(state)
 
@@ -213,26 +224,55 @@ def main():
 
     # Compile each file sequentially
     total_cost = 0.0
+    succeeded = 0
+    failed = 0
     for i, log_path in enumerate(to_compile, 1):
         print(f"\n[{i}/{len(to_compile)}] Compiling {log_path.name}...")
         cost = asyncio.run(compile_daily_log(log_path, state))
+        if cost is None:
+            failed += 1
+            print("  Failed; state not updated.")
+            continue
         total_cost += cost
-        print(f"  Done.")
+        succeeded += 1
+        print("  Done.")
 
     articles = list_wiki_articles()
     regenerate_truth()
     print(f"\nCompilation complete. Total cost: ${total_cost:.2f}")
+    print(f"Logs: {succeeded} succeeded, {failed} failed")
     print(f"Knowledge base: {len(articles)} articles")
 
     # Notify (non-fatal if it fails)
     try:
         from notify import notify
+
         notify(
             "Context Engine",
-            f"Compile: ${total_cost:.2f} ({len(to_compile)} files) | KB: {len(articles)} articles",
+            f"Compile: ${total_cost:.2f} ({succeeded}/{len(to_compile)} files) | "
+            f"KB: {len(articles)} articles",
         )
     except Exception:
         pass
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Compile daily logs into knowledge articles")
+    parser.add_argument("--all", action="store_true", help="Force recompile all logs")
+    parser.add_argument("--file", type=str, help="Compile a specific daily log file")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be compiled")
+    args = parser.parse_args()
+
+    if args.dry_run:
+        _run(args)
+        return
+
+    lock_path = _STATE_DIR / "compile.lock"
+    with compilation_lock(lock_path) as acquired:
+        if not acquired:
+            print("Compilation already running; skipping duplicate request.")
+            return
+        _run(args)
 
 
 if __name__ == "__main__":
